@@ -1,4 +1,4 @@
-from collections import deque
+from collections import OrderedDict
 import xxhash
 import numpy as np
 
@@ -29,7 +29,8 @@ class BlockManager:
         self.block_size = block_size
         self.blocks: list[Block] = [Block(i) for i in range(num_blocks)]
         self.hash_to_block_id: dict[int, int] = dict()
-        self.free_block_ids: deque[int] = deque(range(num_blocks))
+        # Keep FIFO eviction while allowing cached blocks to be reclaimed in O(1).
+        self.free_block_ids: OrderedDict[int, None] = OrderedDict.fromkeys(range(num_blocks))
         self.used_block_ids: set[int] = set()
 
     @classmethod
@@ -41,7 +42,7 @@ class BlockManager:
         return h.intdigest()
 
     def _allocate_block(self) -> int:
-        block_id = self.free_block_ids.popleft()
+        block_id, _ = self.free_block_ids.popitem(last=False)
         block = self.blocks[block_id]
         assert block.ref_count == 0
         if block.hash != -1 and self.hash_to_block_id.get(block.hash) == block_id:
@@ -53,7 +54,7 @@ class BlockManager:
     def _deallocate_block(self, block_id: int):
         assert self.blocks[block_id].ref_count == 0
         self.used_block_ids.remove(block_id)
-        self.free_block_ids.append(block_id)
+        self.free_block_ids[block_id] = None
 
     def can_allocate(self, seq: Sequence) -> int:
         h = -1
@@ -84,7 +85,7 @@ class BlockManager:
                 block.ref_count += 1
             else:
                 block.ref_count = 1
-                self.free_block_ids.remove(block_id)
+                del self.free_block_ids[block_id]
                 self.used_block_ids.add(block_id)
             seq.block_table.append(block_id)
         for i in range(num_cached_blocks, seq.num_blocks):

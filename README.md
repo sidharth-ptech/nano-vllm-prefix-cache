@@ -6,11 +6,54 @@
 <a href="https://trendshift.io/repositories/15323" target="_blank"><img src="https://trendshift.io/api/badge/repositories/15323" alt="GeeeekExplorer%2Fnano-vllm | Trendshift" style="width: 250px; height: 55px;" width="250" height="55"/></a>
 </p>
 
-# Nano-vLLM
+# Nano-vLLM: faster prefix-cache block reuse
 
-A lightweight vLLM implementation built from scratch.
+A focused performance fork of [GeeeekExplorer/nano-vllm](https://github.com/GeeeekExplorer/nano-vllm),
+the lightweight inference engine by Xingkai Yu. Upstream code and the MIT license
+are retained; this fork contributes a small allocator optimization, regression
+tests, and reproducible CPU measurements.
 
-## Key Features
+When a request reuses a completed prefix, reclaiming its cached blocks used to
+scan the free-block queue. An ordered mapping now removes those blocks in
+expected constant time while preserving FIFO eviction and reference counts.
+No additional production dependency is introduced.
+
+**Measured CPU allocator results** for an eight-block cached prefix:
+
+| Pool size | Upstream median cycle | Updated median cycle | Speedup |
+| ---: | ---: | ---: | ---: |
+| 1,024 blocks | 159.08 µs | 114.90 µs | 1.38× |
+| 8,192 blocks | 464.08 µs | 120.17 µs | 3.86× |
+| 32,768 blocks | 1,478.50 µs | 117.71 µs | 12.56× |
+
+The largest pool is a scaling stress test. These numbers measure the complete
+CPU `can_allocate → allocate → deallocate` cycle, **not GPU tokens/second or
+end-to-end serving latency**. At 32,768 blocks, the corresponding cold-miss
+control was 7.2% slower and manager metadata used 4.24 MiB more host memory.
+GPU inference validation remains outstanding.
+
+Read the [performance report](docs/allocator-performance.md),
+[benchmark methodology](benchmarks/README.md), and
+[raw measurements](benchmarks/results/macos-arm64-python312.json).
+The [test suite](tests/README.md) covers ownership invariants, FIFO behavior,
+cache sharing, scheduler preemption, 4,000 differential lifecycle operations,
+and benchmark calculations.
+
+## Run the CPU checks
+
+Python 3.10–3.12 is supported. No model download or CUDA installation is needed.
+
+```bash
+python3.12 -m venv .venv
+source .venv/bin/activate
+python -m pip install -r requirements-cpu.txt
+python -m pytest -q
+python benchmarks/allocator.py --output benchmarks/results/local.json
+```
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for the exact recorded environment and lint checks.
+
+## Upstream engine features
 
 * 🚀 **Fast offline inference** - Comparable inference speeds to vLLM
 * 📖 **Readable codebase** - Clean implementation in ~ 1,200 lines of Python code
@@ -19,8 +62,11 @@ A lightweight vLLM implementation built from scratch.
 ## Installation
 
 ```bash
-pip install git+https://github.com/GeeeekExplorer/nano-vllm.git
+pip install git+https://github.com/sidharth-ptech/nano-vllm-prefix-cache.git
 ```
+
+The full engine uses NVIDIA CUDA, PyTorch, Triton, and FlashAttention. The CPU
+checks above test allocator/scheduler logic; they do not run model inference.
 
 ## Model Download
 
@@ -43,9 +89,11 @@ outputs = llm.generate(prompts, sampling_params)
 outputs[0]["text"]
 ```
 
-## Benchmark
+## Original upstream GPU benchmark
 
-See `bench.py` for benchmark.
+The following results are reproduced from the upstream README. They predate
+this fork and are not evidence of its allocator improvement. See `bench.py`
+for the original offline model benchmark.
 
 **Test Configuration:**
 - Hardware: RTX 4070 Laptop (8GB)

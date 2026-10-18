@@ -1,0 +1,5 @@
+# Standalone tests and allocator benchmarks; does not install the CUDA engine.
+numpy>=1.24,<3
+xxhash>=3,<5
+pytest>=8,<10
+ruff>=0.11,<1
